@@ -1,5 +1,7 @@
 #include "transport_api.h"
 
+#include <stddef.h>
+
 #include "transport_socket.h"
 
 int transport_open(transport_handle_t **handle, const transport_open_args_t *args) {
