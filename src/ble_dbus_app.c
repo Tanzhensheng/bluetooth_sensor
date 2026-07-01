@@ -129,15 +129,12 @@ static int find_adapter_path(ble_dbus_app_t *app) {
             if (strcmp(if_name, "org.bluez.LEAdvertisingManager1") == 0) {
                 has_adv = 1;
             }
-            g_variant_unref(props);
         }
 
         if (has_gatt != 0 && has_adv != 0) {
             snprintf(app->adapter_path, sizeof(app->adapter_path), "%s", object_path);
-            g_variant_unref(ifaces);
             break;
         }
-        g_variant_unref(ifaces);
     }
 
     g_variant_unref(managed);
@@ -440,33 +437,33 @@ static GVariant *ad_get_property(
 }
 
 static const GDBusInterfaceVTable k_root_vtable = {
-    root_method_call,
-    NULL,
-    NULL
+    .method_call = root_method_call,
+    .get_property = NULL,
+    .set_property = NULL
 };
 
 static const GDBusInterfaceVTable k_service_vtable = {
-    NULL,
-    service_get_property,
-    NULL
+    .method_call = NULL,
+    .get_property = service_get_property,
+    .set_property = NULL
 };
 
 static const GDBusInterfaceVTable k_rx_vtable = {
-    rx_method_call,
-    rx_get_property,
-    NULL
+    .method_call = rx_method_call,
+    .get_property = rx_get_property,
+    .set_property = NULL
 };
 
 static const GDBusInterfaceVTable k_tx_vtable = {
-    tx_method_call,
-    tx_get_property,
-    NULL
+    .method_call = tx_method_call,
+    .get_property = tx_get_property,
+    .set_property = NULL
 };
 
 static const GDBusInterfaceVTable k_ad_vtable = {
-    ad_method_call,
-    ad_get_property,
-    NULL
+    .method_call = ad_method_call,
+    .get_property = ad_get_property,
+    .set_property = NULL
 };
 
 static int parse_introspection(ble_dbus_app_t *app) {
@@ -536,23 +533,71 @@ static int register_object(
     return 0;
 }
 
+typedef struct {
+    GMainLoop *loop;
+    GVariant *reply;
+    GError *error;
+} bluez_call_t;
+
+static void bluez_call_done(GObject *source_object, GAsyncResult *res, gpointer user_data) {
+    bluez_call_t *call = (bluez_call_t *)user_data;
+
+    call->reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source_object), res, &call->error);
+    g_main_loop_quit(call->loop);
+}
+
+static GVariant *call_bluez_with_main_context(
+    ble_dbus_app_t *app,
+    const char *interface_name,
+    const char *method_name,
+    GVariant *parameters,
+    GError **error
+) {
+    bluez_call_t call;
+
+    memset(&call, 0, sizeof(call));
+    call.loop = g_main_loop_new(NULL, FALSE);
+    if (call.loop == NULL) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "failed to create temporary main loop");
+        return NULL;
+    }
+
+    g_dbus_connection_call(
+        APP_CONN(app),
+        "org.bluez",
+        app->adapter_path,
+        interface_name,
+        method_name,
+        parameters,
+        NULL,
+        G_DBUS_CALL_FLAGS_NONE,
+        -1,
+        NULL,
+        bluez_call_done,
+        &call
+    );
+    g_main_loop_run(call.loop);
+    g_main_loop_unref(call.loop);
+
+    if (call.reply == NULL && error != NULL) {
+        *error = call.error;
+    } else {
+        g_clear_error(&call.error);
+    }
+    return call.reply;
+}
+
 static int register_bluez_app(ble_dbus_app_t *app) {
     GError *error = NULL;
     GVariantBuilder options;
     GVariant *reply = NULL;
 
     g_variant_builder_init(&options, G_VARIANT_TYPE("a{sv}"));
-    reply = g_dbus_connection_call_sync(
-        APP_CONN(app),
-        "org.bluez",
-        app->adapter_path,
+    reply = call_bluez_with_main_context(
+        app,
         "org.bluez.GattManager1",
         "RegisterApplication",
         g_variant_new("(o@a{sv})", app->root_path, g_variant_builder_end(&options)),
-        NULL,
-        G_DBUS_CALL_FLAGS_NONE,
-        -1,
-        NULL,
         &error
     );
     if (reply == NULL) {
@@ -570,17 +615,11 @@ static int register_bluez_advertisement(ble_dbus_app_t *app) {
     GVariant *reply = NULL;
 
     g_variant_builder_init(&options, G_VARIANT_TYPE("a{sv}"));
-    reply = g_dbus_connection_call_sync(
-        APP_CONN(app),
-        "org.bluez",
-        app->adapter_path,
+    reply = call_bluez_with_main_context(
+        app,
         "org.bluez.LEAdvertisingManager1",
         "RegisterAdvertisement",
         g_variant_new("(o@a{sv})", app->ad_path, g_variant_builder_end(&options)),
-        NULL,
-        G_DBUS_CALL_FLAGS_NONE,
-        -1,
-        NULL,
         &error
     );
     if (reply == NULL) {
