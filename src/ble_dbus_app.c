@@ -67,6 +67,7 @@ static const char *k_ad_xml =
     "    <property name='Type' type='s' access='read'/>"
     "    <property name='ServiceUUIDs' type='as' access='read'/>"
     "    <property name='LocalName' type='s' access='read'/>"
+    "    <property name='Discoverable' type='b' access='read'/>"
     "  </interface>"
     "</node>";
 
@@ -432,6 +433,9 @@ static GVariant *ad_get_property(
     }
     if (strcmp(property_name, "LocalName") == 0) {
         return g_variant_new_string(app->device_name);
+    }
+    if (strcmp(property_name, "Discoverable") == 0) {
+        return g_variant_new_boolean(TRUE);
     }
     return NULL;
 }
